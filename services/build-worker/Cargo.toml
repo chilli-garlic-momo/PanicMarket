@@ -18,7 +18,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 tempfile = "3"
-tokio-tar = "0.3"
-async-compression = { version = "0.4", features = ["tokio", "gzip"] }
-bollard = "0.16"  # Docker API client
+bollard = "0.16"
+futures-util = "0.3"
+tar = "0.4"
+flate2 = "1"
 dotenvy = "0.15"

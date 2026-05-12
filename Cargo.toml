@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "services/api-gateway",
+    "services/build-worker",
+    "services/orchestrator",
+    "services/bot-worker",
+    "services/scoring-engine",
+    "services/leaderboard-api",
+    "examples/rust-starter",
+]
+resolver = "2"
