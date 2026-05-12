@@ -1,0 +1,209 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: benchmark
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U benchmark"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin123;
+      mc mb --ignore-existing local/submissions;
+      mc mb --ignore-existing local/build-artifacts;
+      echo 'MinIO buckets created';
+      "
+
+  temporal:
+    image: temporalio/auto-setup:1.22.0
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=benchmark
+      - POSTGRES_PWD=benchmark_secret
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./scripts/temporal-dynamicconfig:/etc/temporal/config/dynamicconfig
+
+  temporal-ui:
+    image: temporalio/ui:2.21.0
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    ports:
+      - "8088:8080"
+    depends_on:
+      - temporal
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://benchmark:benchmark_secret@postgres:5432/benchmark
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=submissions
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  build-worker:
+    build:
+      context: ./services/build-worker
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://benchmark:benchmark_secret@postgres:5432/benchmark
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=submissions
+      - REGISTRY_URL=localhost:5001
+      - BUILD_MODE=docker  # 'docker' for local dev, 'kaniko' for prod
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - RUST_LOG=info
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - build_tmp:/tmp/builds
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  local-registry:
+    image: registry:2
+    ports:
+      - "5001:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://benchmark:benchmark_secret@postgres:5432/benchmark
+      - REDIS_URL=redis://redis:6379
+      - TEMPORAL_URL=http://temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - BOT_WORKER_URL=http://bot-worker:9090
+      - SCORING_ENGINE_URL=http://scoring-engine:9091
+      - DEPLOYMENT_MODE=docker  # 'docker' for local, 'kubernetes' for prod
+      - RUST_LOG=info
+    depends_on:
+      - temporal
+      - postgres
+    restart: unless-stopped
+
+  bot-worker:
+    build:
+      context: ./services/bot-worker
+      dockerfile: Dockerfile
+    ports:
+      - "9090:9090"
+    environment:
+      - DATABASE_URL=postgresql://benchmark:benchmark_secret@postgres:5432/benchmark
+      - REDIS_URL=redis://redis:6379
+      - RUST_LOG=info
+      - BOT_COUNT=100          # MVP: 100 bots (scale in Phase 2)
+      - ORDERS_PER_BOT=10      # 100 bots * 10 = 1000 TPS per second target
+    restart: unless-stopped
+
+  scoring-engine:
+    build:
+      context: ./services/scoring-engine
+      dockerfile: Dockerfile
+    ports:
+      - "9091:9091"
+    environment:
+      - DATABASE_URL=postgresql://benchmark:benchmark_secret@postgres:5432/benchmark
+      - REDIS_URL=redis://redis:6379
+      - LEADERBOARD_API_URL=http://leaderboard-api:9092
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  leaderboard-api:
+    build:
+      context: ./services/leaderboard-api
+      dockerfile: Dockerfile
+    ports:
+      - "9092:9092"
+    environment:
+      - DATABASE_URL=postgresql://benchmark:benchmark_secret@postgres:5432/benchmark
+      - REDIS_URL=redis://redis:6379
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
+  registry_data:
+  build_tmp:

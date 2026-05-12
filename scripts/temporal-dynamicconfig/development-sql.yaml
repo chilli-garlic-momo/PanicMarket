@@ -1,0 +1,6 @@
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+frontend.enableServerVersionCheck:
+  - value: false
+    constraints: {}

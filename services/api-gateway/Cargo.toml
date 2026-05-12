@@ -1,0 +1,30 @@
+[package]
+name = "api-gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "limit"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono"] }
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+minio = "0.1"
+aws-sdk-s3 = "1"
+aws-config = "1"
+aws-credential-types = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+bytes = "1"
+anyhow = "1"
+thiserror = "1"
+dotenvy = "0.15"
+
+[dev-dependencies]
+axum-test = "14"
+tokio = { version = "1", features = ["full", "test-util"] }
